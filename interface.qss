@@ -1,0 +1,120 @@
+QWidget{
+    background:rgb(255, 255, 255);
+}
+QLabel{
+    font: 75 12pt "Arial";
+    }
+QPushButton{
+    font: 75 12pt "Arial";
+    }
+QPushButton#open_cam_btn{
+    border-radius:8px;
+    background:rgb(110, 190, 10);
+    color:white;
+    }
+QPushButton#get0frame_btn{
+    border-radius:8px;
+    background:rgb(110, 190, 10);
+    color:white;
+    }
+QPushButton#getMframe_btn{
+    border-radius:8px;
+    background:rgb(110, 190, 10);
+    color:white;
+    }
+QPushButton#set_detect_roi{
+    border-radius:8px;
+    background:rgb(110, 190, 10);
+    color:white;
+    }
+QPushButton#testbtn{
+    border-radius:8px;
+    background:rgb(110, 190, 10);
+    color:white;
+    }
+QPushButton#testbtn_2{
+    border-radius:8px;
+    background:rgb(110, 190, 10);
+    color:white;
+    }
+QPushButton#net_connect_btn{
+    border-radius:8px;
+    background:rgb(110, 190, 10);
+    color:white;
+    }
+QPushButton#net_connect_btn2{
+    border-radius:8px;
+    background:rgb(110, 190, 10);
+    color:white;
+    }
+QPushButton#net_connect_btn2_2{
+    border-radius:8px;
+    background:rgb(110, 190, 10);
+    color:white;
+    }
+
+QPushButton#preview_btn{
+    border-radius:8px;
+    background:rgb(110, 190, 10);
+    color:white;
+    }
+QPushButton#set_btn{
+    border-radius:8px;
+    background:rgb(110, 190, 10);
+    color:white;
+    }
+QPushButton#get1frame_btn{
+    border-radius:8px;
+    background:rgb(110, 190, 10);
+    color:white;
+    }
+
+QLineEdit{
+        border:1px solid gray;
+        width:300px;
+        border-radius:6px;
+        padding:2px 4px;
+        selection-background-color: rgb(0, 0, 255);
+        selection-color: rgb(255, 255, 255);
+        font: 75 12pt "Arial";
+}
+QLineEdit:hover{
+    background-color: rgb(0,255,0);
+}
+
+QTextEdit{
+    font: 10pt "Arial";
+}
+
+QLabel#label_door_title{ background-color:rgb(90, 173, 220); color:white;border-radius:8px;font: 18pt "Arial";}
+QLabel#label_camera_title{ background-color:rgb(218, 88, 93); color:white;border-radius:8px;font: 18pt "Arial";}
+QLabel#label_door_1{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_2{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_3{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_4{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_5{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_6{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_7{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_8{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_9{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_10{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_11{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_12{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_13{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_14{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_15{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_16{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_17{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_18{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_19{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_20{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_21{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_22{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_23{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_24{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_25{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_26{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_27{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_28{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_29{ background-color:rgb(0, 0, 255); }
+QLabel#label_door_30{ background-color:rgb(0, 0, 255); }

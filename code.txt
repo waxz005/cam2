@@ -1,0 +1,8 @@
+if __name__ == '__main__':
+    app = QtWidgets.QApplication(sys.argv)
+    main_form = Main_Form()
+    with open("interface.qss") as f:
+        qss = f.read()
+    app.setStyleSheet(qss)
+    main_form.show()
+    sys.exit(app.exec_())
