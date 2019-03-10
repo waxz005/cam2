@@ -20,11 +20,11 @@ DiskNumber = 'S20GNAAH146071'
 if wmi.WMI().Win32_DiskDrive()[0].SerialNumber.strip() != DiskNumber:
     print("硬件设备故障，程序终止")
     time.sleep(3)
-    os._exit(0)
+    # os._exit(0)
 Initialtime = datetime.datetime(2019,3,2)
 if (datetime.datetime.now() - Initialtime).days>7:
     print("超时未注册，退出程序")
-    os._exit(0)
+    # os._exit(0)
 
 GET0FRAME = 0
 GET1FRAME = 2
@@ -39,10 +39,12 @@ buffSize = 65535
 cnt = 0
 global imgtest
 
+
+
 imageblack = np.zeros((480, 640), np.uint8)
 imageblack = QImage(imageblack.data, imageblack.shape[1], imageblack.shape[0], QImage.Format_Grayscale8)
 # 测试用数据结束
-# 图像全局变量，socket接收到数据后存入其中，并发送signal
+# 图像全局变量，socket接收到数据后存入其中   ，并发送signal
 # 预置了30个640*480*3大小的u8类型图像文件，后续需要还可以继续扩充
 imgdecode = [np.zeros((480, 640, 3), np.uint8)] * 31
 
@@ -82,7 +84,7 @@ class Serial_D(QtCore.QObject):
             num = 0
         if num>0:
             data = self.ser.read(num)
-            # print(data)
+            print(data)
             num = len(data)
             if data[:2]==b'\x55\xaa' and data[-2:]==b'\xeb\x90':
                 self.recv_data = data
@@ -119,6 +121,7 @@ class RecImgThread(QThread):
         self.buffsize = 65535
         try:
             self.server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            print ('locad host:', addr)
             self.server.bind(self.addr)
             self.working = True
         except:
@@ -139,6 +142,7 @@ class RecImgThread(QThread):
             # if not self.working: return
             # 第一次接收到的数据，根据协议，为数据长度
             data, address = self.server.recvfrom(self.buffsize)
+            print (data)
             # 测试用协议，现已无用
             if len(data) == 2 and data == b'ok':
                 self.isClear.emit(-1)
@@ -460,6 +464,14 @@ class SetDlg(QtWidgets.QDialog, Ui_Dlg_setroi):
 class Main_Form(QtWidgets.QWidget, Ui_Form):
     def __init__(self):
         super(Main_Form, self).__init__()
+        # 设置呼吸检测的定时器，频率2秒
+        self.timer_breathe = QTimer(self)
+        self.timer_breathe.timeout.connect(self.timer_breathe_func)
+        self.timer_breathe.start(2000)
+        # 秒时钟 用于关门后检测异物的计时，正常检测6秒钟
+        self.timer_breathe_cnt = 0
+        # True表示正在检测，False表示检测结束
+        self.bischecking = False
 
         #
         try:
@@ -499,12 +511,14 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
         self.label_imgsw_3.setPixmap(QPixmap.fromImage(imageblack))
         # 命令传送IP
         self.addr_cmds = ['']  # ip:192.168.100.101~199, port=10001~10099
-        for i in range(1, 40):
+        self.addr_cmds.append(('127.0.0.1', 10001))
+        for i in range(2, 40):
             # 暂用127.0.0.1测试-------
             # ip = '127.0.0.1'
             ip = '192.168.100.'+str(100+i)
             port = 10000+i
             self.addr_cmds.append((ip, port))
+
 
         # 测试用数据
         # self.addr_imgs[1]=('192.168.1.3',9901)
@@ -512,8 +526,117 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
         # self.addr_cmds[1]=('192.168.1.16', 10001)
         # self.addr_cmds[2]=('127.0.0.1',10002)
 
+    def timer_breathe_func(self):
+        if self.bischecking:
+            self.timer_breathe_cnt = self.timer_breathe_cnt + 2
+            if self.timer_breathe_cnt > 5:
+                self.bischecking = False
+                self.timer_breathe_cnt = 0
+                # 恢复正常蓝色，但因为可能有异物，这里不能恢复蓝色
+
     def serrec(self):
-        print(self.ser.recv_data)
+        cmd = self.ser.recv_data
+        print(cmd)
+        if cmd[2] == 1:
+            print (cmd[2])
+            self.label_door_1.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_2.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_3.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_4.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_5.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_6.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_7.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_8.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_9.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_10.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_11.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_12.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_13.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_14.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_15.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_16.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_17.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_18.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_19.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_20.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_21.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_22.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_23.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_24.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_25.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_26.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_27.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_28.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_29.setStyleSheet("background-color:rgb(0,0,255);")
+            self.label_door_30.setStyleSheet("background-color:rgb(0,0,255);")
+        # 上下行人，灰度
+        elif cmd[2] == 2:
+            print (cmd[2])
+            self.label_door_1.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_2.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_3.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_4.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_5.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_6.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_7.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_8.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_9.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_10.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_11.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_12.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_13.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_14.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_15.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_16.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_17.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_18.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_19.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_20.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_21.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_22.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_23.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_24.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_25.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_26.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_27.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_28.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_29.setStyleSheet("background-color:rgb(144,144,144);")
+            self.label_door_30.setStyleSheet("background-color:rgb(144,144,144);")
+        # 关门开始检测，黄色，检测到有异物变红色
+        elif cmd[2] == 3:
+            self.bischecking = True
+            print(cmd[2])
+            self.label_door_1.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_2.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_3.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_4.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_5.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_6.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_7.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_8.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_9.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_10.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_11.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_12.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_13.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_14.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_15.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_16.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_17.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_18.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_19.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_20.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_21.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_22.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_23.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_24.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_25.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_26.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_27.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_28.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_29.setStyleSheet("background-color:rgb(255,255,0);")
+            self.label_door_30.setStyleSheet("background-color:rgb(255,255,0);")
+
 
     # 连接按钮，连接所有相机用
     def open_cam(self):
@@ -632,7 +755,7 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def connectnet(self):
         # 新建线程，传入参数
         addr = self.addr_imgs[1]
-        # print(addr)
+        print(addr)
         self.thread = RecImgThread(addr=addr, index=1)
         if self.thread.working == False:  # 没有打开
             self.textEdit_information.insertPlainText("打开{}前端失败\n".format(addr[1]-9900))
@@ -649,6 +772,7 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     # slot函数，接收线程信号，显示图像在第一个图像框中
     def Imgsw(self, isClear):
         global imgdecode  # 声明使用的全局变量
+        print (isClear)
         # 如果没有异物
         if isClear == 1:
             #self.textEdit_info.setText("OK")
@@ -830,22 +954,24 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     # slot函数，接收线程信号，显示图像在第一个图像框中
     def Imgsw6(self, isClear):
         global imgdecode  # 声明使用的全局变量
-        # 如果没有异物
-        if isClear == 1:
-            # self.textEdit_info.setText("OK")
-            # 设置门为蓝色（后期改成蓝色门图像）
+        if 1:
+            # 如果没有异物
+            if isClear == 1:
+                # self.textEdit_info.setText("OK")
+                # 设置门为蓝色（后期改成蓝色门图像）
+                self.label_door_6.setStyleSheet("background-color:rgb(255,255,0);")
+                self.ChangeLabelFlag(6)
+            elif isClear == 0:  # 如果有异物
+                # 设置门为红色（后期改成红色门图像）
+                self.label_door_6.setStyleSheet("background-color:rgb(255,0,0);")
+                # cv2.rectangle(imgdecode[1], (0,0), (imgdecode[1].shape[1], imgdecode[1].shape[0]), (255, 0, 0), 3)
+                # self.textEdit_info.setText("Warning!!!")
+                # 显示该位置图像
+                self.ShowImg(6)
+            elif isClear == CAMERROR:  # 如果收到摄像头错误
+                print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(6))
+        else:
             self.label_door_6.setStyleSheet("background-color:rgb(0,0,255);")
-            self.ChangeLabelFlag(6)
-        elif isClear == 0:  # 如果有异物
-            # 设置门为红色（后期改成红色门图像）
-            self.label_door_6.setStyleSheet("background-color:rgb(255,0,0);")
-            # cv2.rectangle(imgdecode[1], (0,0), (imgdecode[1].shape[1], imgdecode[1].shape[0]), (255, 0, 0), 3)
-            # self.textEdit_info.setText("Warning!!!")
-            # 显示该位置图像
-            self.ShowImg(6)
-        elif isClear == CAMERROR:  # 如果收到摄像头错误
-            print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(6))
-
     def connectnet7(self):
         # 新建线程，传入参数
         addr = self.addr_imgs[7]
@@ -865,19 +991,20 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw7(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
-        if isClear == 1:
-            # self.textEdit_info.setText("OK")
-            # 设置门为蓝色（后期改成蓝色门图像）
-            self.label_door_7.setStyleSheet("background-color:rgb(0,0,255);")
-            self.ChangeLabelFlag(7)
-        elif isClear == 0:  # 如果有异物
-            # 设置门为红色（后期改成红色门图像）
-            self.label_door_7.setStyleSheet("background-color:rgb(255,0,0);")
-            # cv2.rectangle(imgdecode[1], (0,0), (imgdecode[1].shape[1], imgdecode[1].shape[0]), (255, 0, 0), 3)
-            # self.textEdit_info.setText("Warning!!!")
-            # 显示该位置图像
-            self.ShowImg(7)
-        elif isClear == CAMERROR:  # 如果收到摄像头错误
+        if bischecking:
+            if isClear == 1:
+                # self.textEdit_info.setText("OK")
+                # 检测过程中无异为黄色，有异物为红色
+                self.label_door_7.setStyleSheet("background-color:rgb(255,255,0);")
+                self.ChangeLabelFlag(7)
+            elif isClear == 0:  # 如果有异物
+                # 设置门为红色（后期改成红色门图像）
+                self.label_door_7.setStyleSheet("background-color:rgb(255,0,0);")
+                # cv2.rectangle(imgdecode[1], (0,0), (imgdecode[1].shape[1], imgdecode[1].shape[0]), (255, 0, 0), 3)
+                # self.textEdit_info.setText("Warning!!!")
+                # 显示该位置图像
+                self.ShowImg(7)
+        if isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(7))
 
     def connectnet8(self):
@@ -1674,6 +1801,7 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
+    bischecking = False
     main_form = Main_Form()
     with open("interface.qss") as f:
         qss = f.read()
