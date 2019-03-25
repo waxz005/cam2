@@ -16,20 +16,24 @@ import configparser
 import time
 import wmi
 
-DiskNumber = 'S20GNAAH146071'
-if wmi.WMI().Win32_DiskDrive()[0].SerialNumber.strip() != DiskNumber:
-    print("硬件设备故障，程序终止")
-    time.sleep(3)
-    # os._exit(0)
-Initialtime = datetime.datetime(2019,3,2)
-if (datetime.datetime.now() - Initialtime).days>7:
-    print("超时未注册，退出程序")
-    # os._exit(0)
+DiskNumber = '002810300A07'
+# if wmi.WMI().Win32_DiskDrive()[0].SerialNumber.strip() != DiskNumber:
+#     print("硬件设备故障，程序终止")
+#     time.sleep(3)
+#     # os._exit(0)
+# Initialtime = datetime.datetime(2019,3,11)
+# if (datetime.datetime.now() - Initialtime).days>7:
+#     print("超时未注册，退出程序")
+#     # os._exit(0)
 
 GET0FRAME = 0
 GET1FRAME = 2
 GETMFRAME = 1
+SETTINGRE = 3
 CAMERROR = 5
+SAVEBKIMG = 6
+CAMONLINE = 10
+CAMOFLINE = 20
 parameterfmt = 'iiiiiii'
 
 # 测试用数据
@@ -39,24 +43,29 @@ buffSize = 65535
 cnt = 0
 global imgtest
 
-
-
+# 保存背景全局变量
+BKFILE = "./imagebk/background{}.png"
 imageblack = np.zeros((480, 640), np.uint8)
 imageblack = QImage(imageblack.data, imageblack.shape[1], imageblack.shape[0], QImage.Format_Grayscale8)
+imagegray = np.ones((480, 640), np.uint8)
+imagegray = QImage(imagegray.data, imagegray.shape[1], imagegray.shape[0], QImage.Format_Grayscale8)
 # 测试用数据结束
-# 图像全局变量，socket接收到数据后存入其中   ，并发送signal
+# 图像全局变量，socket接收到数据后存入其中，并发送signal
 # 预置了30个640*480*3大小的u8类型图像文件，后续需要还可以继续扩充
 imgdecode = [np.zeros((480, 640, 3), np.uint8)] * 31
 
-# 串口命令定义
-SERCMD_OPEN = b'\x55\xaa\x01\x00\x00\x00\xeb\x90'  # 已关门
-SERCMD_CLOS = b'\x55\xaa\x02\x00\x00\x00\xeb\x90'  # 已开门
-SERCMD_3 = b'\x55\xaa\x03\x00\x00\x00\xeb\x90'
+# 串口接收命令定义
+SERCMD_OPEN = b'\x55\xaa\x01\x00\x00\x00\xeb\x90'  # 正常状态
+SERCMD_CLOS = b'\x55\xaa\x02\x00\x00\x00\xeb\x90'  # 上下行人状态
+SERCMD_DETE = b'\x55\xaa\x03\x00\x00\x00\xeb\x90'  # 检测状态
 SERCMD_4 = b'\x55\xaa\x04\x00\x00\x00\xeb\x90'
 SERCMD_5 = b'\x55\xaa\x05\x00\x00\x00\xeb\x90'
 SERCMD_6 = b'\x55\xaa\x06\x00\x00\x00\xeb\x90'
 SERCMD_7 = b'\x55\xaa\x07\x00\x00\x00\xeb\x90'
 SERCMD_8 = b'\x55\xaa\x08\x00\x00\x00\xeb\x90'
+# 串口发送命令定义
+SERCMD_BAD = b'\x55\xaa\x10\x00\x00\x00\xeb\x90'  # 有异物
+SERCMD_OK  = b'\x55\xaa\x20\x00\x00\x00\xeb\x90'  # 无异物
 
 class Serial_D(QtCore.QObject):
     SerRecieved = QtCore.pyqtSignal(int)
@@ -77,14 +86,14 @@ class Serial_D(QtCore.QObject):
 
     def recieve(self):
         # print(1)
+        num = 0
         try:
             num = self.ser.inWaiting()
         except:
             self.recv_data = None
-            num = 0
         if num>0:
             data = self.ser.read(num)
-            print(data)
+            # print(data)
             num = len(data)
             if data[:2]==b'\x55\xaa' and data[-2:]==b'\xeb\x90':
                 self.recv_data = data
@@ -121,8 +130,8 @@ class RecImgThread(QThread):
         self.buffsize = 65535
         try:
             self.server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            print ('locad host:', addr)
             self.server.bind(self.addr)
+            self.server.settimeout(6)
             self.working = True
         except:
             self.working = False
@@ -139,56 +148,55 @@ class RecImgThread(QThread):
 
     def run(self):
         while self.working:
-            # if not self.working: return
-            # 第一次接收到的数据，根据协议，为数据长度
-            data, address = self.server.recvfrom(self.buffsize)
-            print (data)
-            # 测试用协议，现已无用
-            if len(data) == 2 and data == b'ok':
-                self.isClear.emit(-1)
-            if len(data) == 1 and data[0] == 1:  # 如果收到关闭消息则停止程序
-                self.server.close()
-                # cv2.destroyAllWindows()
-            # 测试用协议，现已无用
-            if len(data) == 4 and struct.unpack('i', data)[0] == CAMERROR:
-                self.working = False
-                self.isClear.emit(CAMERROR)
-            if len(data) != 4:  # 进行简单的校验，长度值是int类型，占四个字节
-                length = 0
-                continue  # 加上之后容错能力更强，否则容易卡顿
-            else:
-                length = struct.unpack('i', data)[0]  # struct返回tuple，[0]取第一个数，即长度值
-            data, address = self.server.recvfrom(self.buffsize)
-            # 第2次接收数据，根据协议，为是否有异物标志，0表示有异物
-            if len(data) != 4:  # 进行简单的校验，长度值是int类型，占四个字节
-                isClear = 1
-                continue  # 加上之后容错能力更强，否则容易卡顿
-            else:
-                isClear = struct.unpack('i', data)[0] # 接收是否有异物的信息，0表示有异物
-            # print(isClear)
-            data, address = self.server.recvfrom(self.buffsize)  # 接收编码图像数据
-            if length != len(data):  # 进行简单的校验
-                # 测试用，出现掉帧情况时，控制台输出警告词语
-                print('one frame is lost!!!', self.num)
-                self.num += 1    # 暂时没想好干什么用
-                #print(self.num)  # 暂时用于统计掉帧个数，但不完整，因为length和isClear也有掉帧，并未统计在内
-                continue         # 加上之后容错能力更强，否则容易卡顿
-            data = np.array(bytearray(data))  # 格式转换
-            global imgdecode  # 声明使用全局变量
-            global imgtest    # 测试用全局变量
-            imgdecode[self.index] = cv2.imdecode(data, 1)  # 解码
-            cv2.cvtColor(imgdecode[self.index], cv2.COLOR_BGR2RGB, imgdecode[self.index])
-            # 如果有异物，发出信号0，否则发出-1
-            if isClear == 0:
-                self.isClear.emit(0)   # 释放signal，触发slot函数处理
-            else:
-                self.isClear.emit(1)  # 释放signal，触发slot函数处理
-            # imgtest = cv2.imdecode(data, 1)
-            # print('warning!!!')
-            # print(datetime.datetime.now())
-            # cv2.imshow('frames', imgdecode)  # 窗口显示
-            # if cv2.waitKey(1) == 27:  # 按下“ESC”退出，测试用
-                # break
+            try:
+                # if not self.working: return
+                # 第一次接收到的数据，根据协议，为数据长度
+                data, address = self.server.recvfrom(self.buffsize)
+                if len(data) == 4 and struct.unpack('i', data)[0] == CAMONLINE:
+                    self.isClear.emit(CAMONLINE)
+                    continue
+                    # pass
+                if len(data) == 4 and struct.unpack('i', data)[0] == CAMERROR:
+                    self.working = False
+                    self.isClear.emit(CAMERROR)
+                if len(data) != 4:  # 进行简单的校验，长度值是int类型，占四个字节
+                    length = 0
+                    continue  # 加上之后容错能力更强，否则容易卡顿
+                else:
+                    length = struct.unpack('i', data)[0]  # struct返回tuple，[0]取第一个数，即长度值
+                data, address = self.server.recvfrom(self.buffsize)
+                # 第2次接收数据，根据协议，为是否有异物标志，0表示有异物
+                if len(data) != 4:  # 进行简单的校验，长度值是int类型，占四个字节
+                    isClear = 1
+                    continue  # 加上之后容错能力更强，否则容易卡顿
+                else:
+                    isClear = struct.unpack('i', data)[0] # 接收是否有异物的信息，0表示有异物
+                # print(isClear)
+                data, address = self.server.recvfrom(self.buffsize)  # 接收编码图像数据
+                if length != len(data):  # 进行简单的校验
+                    # 测试用，出现掉帧情况时，控制台输出警告词语
+                    print('one frame is lost!!!', self.num)
+                    self.num += 1    # 暂时没想好干什么用
+                    #print(self.num)  # 暂时用于统计掉帧个数，但不完整，因为length和isClear也有掉帧，并未统计在内
+                    continue         # 加上之后容错能力更强，否则容易卡顿
+                data = np.array(bytearray(data))  # 格式转换
+                global imgdecode  # 声明使用全局变量
+                global imgtest    # 测试用全局变量
+                imgdecode[self.index] = cv2.imdecode(data, 1)  # 解码
+                cv2.cvtColor(imgdecode[self.index], cv2.COLOR_BGR2RGB, imgdecode[self.index])
+                # 如果有异物，发出信号0，否则发出-1
+                if isClear == 0:
+                    self.isClear.emit(0)   # 释放signal，触发slot函数处理
+                else:
+                    self.isClear.emit(1)  # 释放signal，触发slot函数处理
+                # imgtest = cv2.imdecode(data, 1)
+                # print('warning!!!')
+                # print(datetime.datetime.now())
+                # cv2.imshow('frames', imgdecode)  # 窗口显示
+                # if cv2.waitKey(1) == 27:  # 按下“ESC”退出，测试用
+                    # break
+            except:
+                self.isClear.emit(CAMOFLINE)
 
 # 设置子界面
 class SetDlg(QtWidgets.QDialog, Ui_Dlg_setroi):
@@ -247,9 +255,9 @@ class SetDlg(QtWidgets.QDialog, Ui_Dlg_setroi):
     # 鼠标事件处理
     def eventFilter(self, obj, event):
         if obj == self.label_imgsw:
-            if event.type() == QEvent.MouseButtonDblClick:
-                self.textEdit_information.setText("双击了Label")
-            elif event.type() == QEvent.MouseButtonPress:
+            # if event.type() == QEvent.MouseButtonDblClick:
+            #     self.textEdit_information.setText("双击了Label")
+            if event.type() == QEvent.MouseButtonPress:
                 x = event.pos().x() * self.HScale
                 y = event.pos().y() * self.WScale
                 dep = self.depth[int(y)][int(x)]
@@ -307,53 +315,24 @@ class SetDlg(QtWidgets.QDialog, Ui_Dlg_setroi):
 
     # 预览设置
     def pre_setting(self):
-        try:
-            # -1避免溢出
-            LT_x = int(self.lineEdit_LT_x.text())
-            LT_y = int(self.lineEdit_LT_y.text())
-            RB_x = int(self.lineEdit_RB_x.text())-1
-            RB_y = int(self.lineEdit_RB_y.text())-1
-            Bad_Width = int(self.lineEdit_badWidth.text())
-            Bad_Height = int(self.lineEdit_badHeight.text())
-            Std_Height = int(self.lineEdit_stdHeight.text())
-        except:
-            QtWidgets.QMessageBox.warning(self,"警告","坐标值不能为空！",QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+        LT_x, LT_y, RB_x, RB_y, Bad_Width, Bad_Height, Std_Height = self.CheckSetInput()
+        if -1 in (LT_x, LT_y, RB_x, RB_y, Bad_Width, Bad_Height, Std_Height):
             return
-
-        # print(LT_x, LT_y, RB_x, RB_y)
-        if LT_x > RB_x or LT_y > RB_y:
-            QtWidgets.QMessageBox.warning(self,"警告","右下角横纵坐标值均需大于左上角！",QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
-            return
-
-        # 测试代码
-        # 测试代码
-
         # 画出区域
         image = self.image.copy()
-        roi = self.depth[LT_y:RB_y,LT_x:RB_x].copy()
+        roi = self.depth[LT_y:RB_y, LT_x:RB_x].copy()
         roimax = roi.max()
         roimin = roi.min()
-        roimean = roi.mean()
-        # cv2.convertScaleAbs(roi,roi,1/roimax)
-        cv2.blur(roi,(11,11),roi)
-        #cv2.threshold(roi,(Std_Height-Bad_Height*0.7)*255/roimax,1,cv2.THRESH_BINARY_INV,roi)
-        # refcnt = np.sum(roi)
-        th, roi = cv2.threshold(roi,Std_Height-Bad_Height,255,cv2.THRESH_BINARY_INV)
-        # print(roi.max(),roi.min())
-        roi = roi.astype(np.uint8)
-        kernel = np.ones((3, 3), np.uint8)
-        roi = cv2.dilate(roi, kernel)
-        _,contours, h = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        area = 0
-        for i in range(len(contours)):
-            cnt = cv2.contourArea(contours[i])
-            if area < cnt:
-                area = cnt
-        refcnt = cv2.countNonZero(roi)
+        roimean = int(roi.mean())
+        area = self.isClear3()
+        if area == -1:
+            self.textEdit_information.setText("背景图像不存在，请保存背景后再预览设置")
+            return
         # refcnt = np.sum((roi<Std_Height-Bad_Height))
-        refcnt = int(np.sqrt(refcnt+625))
-        self.textEdit_information.setText("区域最远:{} 区域最近:{} 区域均值:{} 参考值:{}".format(roimax, roimin,int(roimean),refcnt))
-        self.textEdit_information.insertPlainText("距离:{} 面积:{}\n".format(roimean,area))
+        refcnt = int(np.sqrt(area+100))
+        self.textEdit_information.setText("区域最远:{} 区域最近:{} 区域均值:{}".format(roimax, roimin,int(roimean)))
+        self.textEdit_information.insertPlainText("建议设置：异物宽度 {}像素 || 异物高度 {}mm || 标准高度 {}mm\n".format(refcnt,150,int(roimax*0.97)))
+        self.textEdit_information.insertPlainText("距离:{} 面积:{}\n".format(roimean, area))
         # cv2.imshow('1', image[LT_y:RB_y,LT_x:RB_x]);cv2.waitKey(0)
         # 画矩形
         cv2.rectangle(image, (LT_x, LT_y), (RB_x, RB_y), (50, 200, 127), 3)
@@ -365,9 +344,88 @@ class SetDlg(QtWidgets.QDialog, Ui_Dlg_setroi):
         imgsw = QImage(image.data, image.shape[1], image.shape[0], QImage.Format_RGB888)
         self.label_imgsw.setPixmap(QPixmap.fromImage(imgsw))
 
-    # 定义设置响应函数
-    def set_detect_roi(self):
+    # 保存背景图像在上位机（用于算法调试）和前端
+    def savebkimage(self):
+        cv2.imwrite(BKFILE.format(self.index), self.depth)
+        self.server_cmd.settimeout(5)
+        try:
+            self.server_cmd.send(struct.pack('i', SAVEBKIMG))
+            data = self.server_cmd.recv(256)
+            if data[0] == SAVEBKIMG:
+                QtWidgets.QMessageBox.information(self,"提示","保存成功",QtWidgets.QMessageBox.Yes|QtWidgets.QMessageBox.No)
+        except:
+            QtWidgets.QMessageBox.warning(self, "提示", "保存失败，请重新保存！", QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+
+    # 使用标准深度法检测
+    def isClear2(self):
+        LT_x, LT_y, RB_x, RB_y, Bad_Width, Bad_Height, Std_Height = self.CheckSetInput()
+        if -1 in (LT_x, LT_y, RB_x, RB_y, Bad_Width, Bad_Height, Std_Height):
+            return
+        roi = self.depth[LT_y:RB_y, LT_x:RB_x].copy()
+        # cv2.convertScaleAbs(roi,roi,1/roimax)
+        roi[np.where(roi > Std_Height * 0.99)] = Std_Height
+        roi[np.where(roi <= 0)] = Std_Height
+        roi = Std_Height - roi
+        cv2.blur(roi, (11, 11), roi)
+        cv2.convertScaleAbs(roi, roi, 255. / (Bad_Height + 1))
+        th, roi = cv2.threshold(roi, 255 * 0.5, 255, cv2.THRESH_BINARY)
+        # print(roi.max(),roi.min())
+        roi = roi.astype(np.uint8)
+        cv2.imshow("roi", roi)
+        cv2.waitKey(1)
+        kernel = np.ones((3, 3), np.uint8)
+        roi = cv2.dilate(roi, kernel)
+        _, contours, h = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        area = 0
+        for i in range(len(contours)):
+            cnt = cv2.contourArea(contours[i])
+            if area < cnt:
+                area = cnt
+        return area
+    # 使用背景减除算法检测
+    def isClear3(self):
+        LT_x, LT_y, RB_x, RB_y, Bad_Width, Bad_Height, Std_Height = self.CheckSetInput()
+        if -1 in (LT_x, LT_y, RB_x, RB_y, Bad_Width, Bad_Height, Std_Height):
+            return
+        filename = "./imagebk/background{}.png".format(self.index)
+        if os.path.exists(filename)==False:
+            return -1
+        background = cv2.imread(filename,cv2.IMREAD_UNCHANGED)
+        roi = self.depth[LT_y:RB_y,LT_x:RB_x].copy()
+        bkroi = background[LT_y:RB_y,LT_x:RB_x].copy()
+        if Bad_Height < 20: Bad_Height = 20
+        if Bad_Height > 200: Bad_Height = 200
+        # 将roi和bkroi中小于500，大于标准高度0.99的均设为0，不进行处理
+        # roi中小于500和大于标高的区域设为0
+        roi[np.where(roi<=500)]=0
+        roi[np.where(roi>Std_Height*0.99)]=0
+        # roi中bkroi小于500和大于标高的对应区域设为0
+        roi[np.where(bkroi <= 500)] = 0
+        roi[np.where(bkroi > Std_Height * 0.99)] = 0
+        # bkroi中roi为0的对应区域设为0，去除不稳定0值区域的干扰
+        bkroi[np.where(roi==0)]=0
+        cv2.absdiff(bkroi, roi, roi)
+
+        cv2.blur(roi,(11,11),roi)
+        cv2.convertScaleAbs(roi, roi, 255./(Bad_Height+1))
+        th, roi = cv2.threshold(roi,255*0.5,255,cv2.THRESH_BINARY)
+        roi = roi.astype(np.uint8)
+        cv2.imshow("roi", roi)
+        cv2.waitKey(1)
+        kernel = np.ones((3, 3), np.uint8)
+        roi = cv2.dilate(roi, kernel)
+        _,contours, h = cv2.findContours(roi, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        area = 0
+        for i in range(len(contours)):
+            cnt = cv2.contourArea(contours[i])
+            if area < cnt:
+                area = cnt
+        return area
+
+    # 检测设置框内容并返回
+    def CheckSetInput(self):
         # 检查输入是否有问题，尚不完备
+        LT_x, LT_y, RB_x, RB_y, Bad_Width, Bad_Height, Std_Height=(-1,)*7
         try:
             # 读取参数
             LT_x = int(self.lineEdit_LT_x.text())
@@ -378,12 +436,20 @@ class SetDlg(QtWidgets.QDialog, Ui_Dlg_setroi):
             Bad_Height = int(self.lineEdit_badHeight.text())
             Std_Height = int(self.lineEdit_stdHeight.text())
         except:
-            QtWidgets.QMessageBox.warning(self,"警告","坐标值不能为空！",QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
-            return
+            QtWidgets.QMessageBox.warning(self, "警告", "坐标值不能为空！", QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+            return (-1,)*7
 
         # print(LT_x, LT_y, RB_x, RB_y)
         if LT_x > RB_x or LT_y > RB_y:
-            QtWidgets.QMessageBox.warning(self,"警告","右下角横纵坐标值均需大于左上角！",QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+            QtWidgets.QMessageBox.warning(self, "警告", "右下角横纵坐标值均需大于左上角！",
+                                          QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+            return (-1,)*7
+        return (LT_x,LT_y,RB_x,RB_y,Bad_Width,Bad_Height,Std_Height)
+
+    # 定义设置响应函数
+    def set_detect_roi(self):
+        LT_x, LT_y, RB_x, RB_y, Bad_Width, Bad_Height, Std_Height = self.CheckSetInput()
+        if -1 in (LT_x,LT_y,RB_x,RB_y,Bad_Width,Bad_Height,Std_Height):
             return
 
         # 主界面建立与所有前端的命令通信并传递到子界面
@@ -415,24 +481,39 @@ class SetDlg(QtWidgets.QDialog, Ui_Dlg_setroi):
                                           "设置失败，请再次设置！",
                                           QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
 
+    # 接收深度图像
+    def recvdepthimage(self):
+        addr = ('192.168.100.1', 20000)
+        recvimg = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        recvimg.bind(addr)
+        recvimg.settimeout(2)
+        try:
+            with open('./depth.png', 'wb') as f:
+                while 1:
+                    data = recvimg.recv(16384)
+                    if data != b'end':
+                        f.write(data)
+                    else:
+                        print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"), "recv depth image success")
+                        break
+            recvimg.close()
+            return True
+        except:
+            recvimg.close()
+            return False
+
     # 获取一帧图像---------
     def get1frame(self):
+        self.server_cmd.settimeout(5)
         try:
             # self.server_cmd.setblocking(0)
-            self.server_cmd.settimeout(2)
+            # self.server_cmd.settimeout(2)
             self.server_cmd.send(struct.pack('i', GET1FRAME))
             self.server_cmd.recv(65536)
             # data = struct.unpack(self.parafmt, self.server_cmd.recv(65536))
             # 接收深度图数据
-            f = open('./depth.png', 'wb')
-            while 1:
-                data, addr = self.server_cmd.recvfrom(1024)
-                if data != b'end':
-                    f.write(data)
-                else:
-                    print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"recv depth image success")
-                    break
-            f.close()
+            if self.recvdepthimage()==False:
+                raise socket.error
             #time.sleep(1)
             self.depth = cv2.imread('./depth.png', cv2.IMREAD_UNCHANGED)
             depth = self.depth
@@ -458,21 +539,15 @@ class SetDlg(QtWidgets.QDialog, Ui_Dlg_setroi):
             # imgsw = QImage(imgtest.data, imgtest.shape[1], imgtest.shape[0], QImage.Format_RGB888)
             self.label_imgsw.setScaledContents(True)  # 设置自适应大小，否则只显示部分
             self.label_imgsw.setPixmap(QPixmap.fromImage(imageblack))
-            self.textEdit_information.setText("获取图像失败，请重新获取")
+            self.textEdit_information.setText("网络故障，请检查后重新获取")
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"command error")
+
+    def closeEvent(self, QCloseEvent):
+        cv2.destroyAllWindows()
 
 class Main_Form(QtWidgets.QWidget, Ui_Form):
     def __init__(self):
         super(Main_Form, self).__init__()
-        # 设置呼吸检测的定时器，频率2秒
-        self.timer_breathe = QTimer(self)
-        self.timer_breathe.timeout.connect(self.timer_breathe_func)
-        self.timer_breathe.start(2000)
-        # 秒时钟 用于关门后检测异物的计时，正常检测6秒钟
-        self.timer_breathe_cnt = 0
-        # True表示正在检测，False表示检测结束
-        self.bischecking = False
-
         #
         try:
             self.ser = Serial_D()
@@ -511,135 +586,130 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
         self.label_imgsw_3.setPixmap(QPixmap.fromImage(imageblack))
         # 命令传送IP
         self.addr_cmds = ['']  # ip:192.168.100.101~199, port=10001~10099
-        self.addr_cmds.append(('127.0.0.1', 10001))
-        for i in range(2, 40):
+        for i in range(1, 40):
             # 暂用127.0.0.1测试-------
             # ip = '127.0.0.1'
             ip = '192.168.100.'+str(100+i)
             port = 10000+i
             self.addr_cmds.append((ip, port))
 
+        # 看门狗定时器，计时1秒，watchdogcnt计数，到5时并且没有异物就停止检测
+        self.watchdog = QTimer()
+        self.watchdog.timeout.connect(self.AutoStop)
+        self.watchdogcnt = 0
 
-        # 测试用数据
-        # self.addr_imgs[1]=('192.168.1.3',9901)
-        # self.addr_imgs[2]=('127.0.0.1',9902)
-        # self.addr_cmds[1]=('192.168.1.16', 10001)
-        # self.addr_cmds[2]=('127.0.0.1',10002)
+        self.status = GET0FRAME
+        self.CamConnnected = [0,]*31  # 0表示离线，1表示在线
+        self.isclear = [0,]*31  # 是否有异物标志位，用于自动停止检测的标志，如果有异物，那么再等5秒钟发送停止命令
 
-    def timer_breathe_func(self):
-        if self.bischecking:
-            self.timer_breathe_cnt = self.timer_breathe_cnt + 2
-            if self.timer_breathe_cnt > 5:
-                self.bischecking = False
-                self.timer_breathe_cnt = 0
-                # 恢复正常蓝色，但因为可能有异物，这里不能恢复蓝色
+        self.LED = ['', self.label_door_name_1, self.label_door_name_2, self.label_door_name_3, self.label_door_name_4, self.label_door_name_5,
+                    self.label_door_name_6, self.label_door_name_7, self.label_door_name_8, self.label_door_name_9, self.label_door_name_10,
+                    self.label_door_name_11, self.label_door_name_12, self.label_door_name_13, self.label_door_name_14, self.label_door_name_15,
+                    self.label_door_name_16, self.label_door_name_17, self.label_door_name_18, self.label_door_name_19, self.label_door_name_20,
+                    self.label_door_name_21, self.label_door_name_22, self.label_door_name_23, self.label_door_name_24, self.label_door_name_25,
+                    self.label_door_name_26, self.label_door_name_27, self.label_door_name_28, self.label_door_name_29, self.label_door_name_30,]
+
+        # 获取相机数量并显示
+        conf = configparser.ConfigParser()
+        conf.read('./config.cfg')
+        self.camNum = conf.getint("camera", "num")
+        self.comboBox_Camnums.setCurrentIndex(self.camNum-1)
+        self.comboBox_index_sel.clear()
+        for i in range(1,self.camNum+1):
+            self.comboBox_index_sel.addItem(str(i))
+        # 初始化后即连接所有相机
+        self.open_cam()
+
+    def AutoStop(self):
+        # 如果当前所有相机均为检测到异物，一直发送异物存在命令
+        if 0 in self.isclear[1:]:
+            self.ser.send_data(SERCMD_BAD)
+        else:
+            self.ser.send_data(SERCMD_OK)
+            self.watchdogcnt = (self.watchdogcnt+1)%5
+            if self.watchdogcnt == 0:  # 计数到5并且没有异物
+                self.get0frame()  # 发送停止检测命令
+                self.watchdog.stop()
+                self.ChangeStatus(1)
+
+    def UpdateCamNum(self):
+        self.camNum = int(self.comboBox_Camnums.currentText())
+        conf = configparser.ConfigParser()
+        conf.read('./config.cfg')
+        conf.set("camera","num",str(self.camNum))
+        conf.write(open("./config.cfg",'w'))
+        # print(self.camNum)
+        # 配置界面设置相机数
+        for i in range(1, self.camNum+1):
+            self.CamConnnected[i] = 1
+        for i in range(self.camNum+1, 31):
+            self.CamConnnected[i] = 0
+        self.comboBox_index_sel.clear()
+        for i in range(1,self.camNum+1):
+            self.comboBox_index_sel.addItem(str(i))
+
+    def ChangeStatus(self, color):  # 1表示蓝色， 2表示灰色，3表示黄色
+        gray = "background-color:rgb({0},{0},{0});".format(127)
+        blue = "background-color:rgb(0,0,{0});".format(255)
+        yellow = "background-color:rgb({0},{0},0);".format(255)
+        if color == 1:
+            bk = blue
+        elif color == 2:
+            bk = gray
+        elif color == 3:
+            bk = yellow
+        else:
+            bk = blue
+        self.label_door_1.setStyleSheet(bk)
+        self.label_door_2.setStyleSheet(bk)
+        self.label_door_3.setStyleSheet(bk)
+        self.label_door_4.setStyleSheet(bk)
+        self.label_door_5.setStyleSheet(bk)
+        self.label_door_6.setStyleSheet(bk)
+        self.label_door_7.setStyleSheet(bk)
+        self.label_door_8.setStyleSheet(bk)
+        self.label_door_9.setStyleSheet(bk)
+        self.label_door_10.setStyleSheet(bk)
+        self.label_door_11.setStyleSheet(bk)
+        self.label_door_12.setStyleSheet(bk)
+        self.label_door_13.setStyleSheet(bk)
+        self.label_door_14.setStyleSheet(bk)
+        self.label_door_15.setStyleSheet(bk)
+        self.label_door_16.setStyleSheet(bk)
+        self.label_door_17.setStyleSheet(bk)
+        self.label_door_18.setStyleSheet(bk)
+        self.label_door_19.setStyleSheet(bk)
+        self.label_door_20.setStyleSheet(bk)
+        self.label_door_21.setStyleSheet(bk)
+        self.label_door_22.setStyleSheet(bk)
+        self.label_door_23.setStyleSheet(bk)
+        self.label_door_24.setStyleSheet(bk)
+        self.label_door_25.setStyleSheet(bk)
+        self.label_door_26.setStyleSheet(bk)
+        self.label_door_27.setStyleSheet(bk)
+        self.label_door_28.setStyleSheet(bk)
+        self.label_door_29.setStyleSheet(bk)
+        self.label_door_30.setStyleSheet(bk)
 
     def serrec(self):
-        cmd = self.ser.recv_data
-        print(cmd)
-        if cmd[2] == 1:
-            print (cmd[2])
-            self.label_door_1.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_2.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_3.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_4.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_5.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_6.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_7.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_8.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_9.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_10.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_11.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_12.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_13.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_14.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_15.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_16.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_17.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_18.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_19.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_20.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_21.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_22.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_23.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_24.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_25.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_26.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_27.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_28.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_29.setStyleSheet("background-color:rgb(0,0,255);")
-            self.label_door_30.setStyleSheet("background-color:rgb(0,0,255);")
-        # 上下行人，灰度
-        elif cmd[2] == 2:
-            print (cmd[2])
-            self.label_door_1.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_2.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_3.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_4.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_5.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_6.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_7.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_8.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_9.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_10.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_11.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_12.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_13.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_14.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_15.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_16.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_17.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_18.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_19.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_20.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_21.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_22.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_23.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_24.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_25.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_26.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_27.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_28.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_29.setStyleSheet("background-color:rgb(144,144,144);")
-            self.label_door_30.setStyleSheet("background-color:rgb(144,144,144);")
-        # 关门开始检测，黄色，检测到有异物变红色
-        elif cmd[2] == 3:
-            self.bischecking = True
-            print(cmd[2])
-            self.label_door_1.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_2.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_3.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_4.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_5.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_6.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_7.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_8.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_9.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_10.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_11.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_12.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_13.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_14.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_15.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_16.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_17.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_18.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_19.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_20.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_21.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_22.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_23.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_24.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_25.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_26.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_27.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_28.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_29.setStyleSheet("background-color:rgb(255,255,0);")
-            self.label_door_30.setStyleSheet("background-color:rgb(255,255,0);")
-
+        if self.ser.recv_data == SERCMD_OPEN:  # 正常状态，全部显示蓝色
+            self.ChangeStatus(1)  # 将所有框置为蓝色
+            self.isclear=[1,]*31
+            self.watchdog.stop()
+            self.get0frame()
+        if self.ser.recv_data == SERCMD_CLOS:  # 上下行人状态，显示灰色
+            self.ChangeStatus(2)  # 将所有框置为灰色
+            self.get0frame()
+        if self.ser.recv_data == SERCMD_DETE:  # 检测状态，显示黄色？
+            self.ChangeStatus(3)
+            self.getMframe()  # 发送开始工作命令，检测5秒钟后停止
+            self.watchdog.start(1000)
+        print(self.ser.recv_data)
 
     # 连接按钮，连接所有相机用
     def open_cam(self):
+        # self.UpdateCamNum()
+        # print(self.CamConnnected)
         self.textEdit_information.setText('')
         self.connectnet()
         self.connectnet2()
@@ -674,8 +744,12 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
 
     # 暂停按钮
     def get0frame(self):
+        # self.UpdateCamNum()
+        self.status = GET0FRAME
         self.textEdit_information.setText('')
-        for i, addr in enumerate(self.addr_cmds[1:31]):
+        for i, addr in enumerate(self.addr_cmds[1:self.camNum+1]):
+            if self.CamConnnected[i+1] == 2:  # 相机启动但是未在线
+                continue
             server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             server.connect(addr)
             server.settimeout(0.1)
@@ -694,8 +768,12 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
 
     # 开始工作
     def getMframe(self):
+        # self.UpdateCamNum()
+        self.status = GETMFRAME
         self.textEdit_information.setText('')
-        for i, addr in enumerate(self.addr_cmds[1:31]):
+        for i, addr in enumerate(self.addr_cmds[1:self.camNum+1]):
+            if self.CamConnnected[i+1] == 2:  # 相机启动但是未在线
+                continue
             server = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             server.connect(addr)
             server.settimeout(0.1)
@@ -743,19 +821,45 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def slotcalldlg(self):
         # self.textEdit_information.setText("open a new subdlg")
         # 模态对话框
+        status = self.status
+        self.status = SETTINGRE
         global imgdecode
         index = int(self.comboBox_index_sel.currentText())
+        if self.CamConnnected[index] == 2:  # 2表示已启用但未在线
+            QtWidgets.QMessageBox.warning(self,
+                                          "警告",
+                                          "{}号前端未连接，不能进行设置！".format(index),
+                                          QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+            #return
         addr = self.addr_cmds[index]
         newDialog = SetDlg(image=imgdecode[index], index=index, addr=addr)  # 打开设置对话框(模态)，传入图像和序号参数
         newDialog.exec_()
+        self.status = status
+        # 如果设置前是工作状态，设置后也是工作状态
+        if self.status == GETMFRAME:
+            self.getMframe()
         # self.textEdit_information.setText("close a dlg")
+
+    # 连接状态显示函数
+    def ChangeConStatus(self, index, isClear):
+        if self.CamConnnected[index]==0:  # 相机不启用
+            # 显示绿色
+            self.LED[index].setStyleSheet("background-color:rgb(0,255,0);")
+        if self.CamConnnected[index]==1 and isClear==CAMOFLINE:  # 相机启用，但未接收到任何信号，即掉线
+            # 显示红色并且将相机状态置为2，表示启动但掉线
+            self.LED[index].setStyleSheet("background-color:rgb(255,0,0);")
+            self.CamConnnected[index] = 2
+        if self.CamConnnected[index]==2 and isClear!=CAMOFLINE:  # 相机启用，并接收到信号
+            # 显示绿色并将相机状态置为1，表示启用并在线
+            self.LED[index].setStyleSheet("background-color:rgb(0,255,0);")
+            self.CamConnnected[index] = 1
 
     # 实现connectnet函数，textEdit是我们放上去的文本框的id
     # btn响应函数
     def connectnet(self):
         # 新建线程，传入参数
         addr = self.addr_imgs[1]
-        print(addr)
+        # print(addr)
         self.thread = RecImgThread(addr=addr, index=1)
         if self.thread.working == False:  # 没有打开
             self.textEdit_information.insertPlainText("打开{}前端失败\n".format(addr[1]-9900))
@@ -767,13 +871,13 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             # 显示线程信息
             info = "打开{}前端成功\n".format(addr[1]-9900)
             self.textEdit_information.insertPlainText(info)
-            self.net_connect_btn.setEnabled(False)
 
     # slot函数，接收线程信号，显示图像在第一个图像框中
     def Imgsw(self, isClear):
         global imgdecode  # 声明使用的全局变量
-        print (isClear)
         # 如果没有异物
+        index = 1
+        self.isclear[index] = isClear
         if isClear == 1:
             #self.textEdit_info.setText("OK")
             # 设置门为蓝色（后期改成蓝色门图像）
@@ -788,6 +892,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(1)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(1))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     # 打开第2个线程
     def connectnet2(self):
@@ -804,12 +911,13 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             # 显示线程信息
             info = "打开{}前端成功\n".format(addr[1]-9900)
             self.textEdit_information.insertPlainText(info)
-            self.net_connect_btn2.setEnabled(False)
 
         # slot函数，接收线程信号，显示图像在控件label_imgsw_2框中
     def Imgsw2(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 2
+        self.isclear[index] = isClear
         if isClear == 1:
             # self.textEdit_info.setText("OK")
             # 设置门为蓝色（后期改成蓝色门图像）
@@ -824,6 +932,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(2)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(2))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     # 实现connectnet函数，textEdit是我们放上去的文本框的id
     # btn响应函数
@@ -841,12 +952,13 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             # 显示线程信息
             info = "打开{}前端成功\n".format(addr[1]-9900)
             self.textEdit_information.insertPlainText(info)
-            self.net_connect_btn.setEnabled(False)
 
     # slot函数，接收线程信号，显示图像在第一个图像框中
     def Imgsw3(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 3
+        self.isclear[index] = isClear
         if isClear == 1:
             # self.textEdit_info.setText("OK")
             # 设置门为蓝色（后期改成蓝色门图像）
@@ -861,6 +973,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(3)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(3))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet4(self):
         # 新建线程，传入参数
@@ -876,12 +991,13 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             # 显示线程信息
             info = "打开{}前端成功\n".format(addr[1]-9900)
             self.textEdit_information.insertPlainText(info)
-            self.net_connect_btn.setEnabled(False)
 
     # slot函数，接收线程信号，显示图像在第一个图像框中
     def Imgsw4(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 4
+        self.isclear[index] = isClear
         if isClear == 1:
             # self.textEdit_info.setText("OK")
             # 设置门为蓝色（后期改成蓝色门图像）
@@ -896,6 +1012,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(4)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(4))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet5(self):
         # 新建线程，传入参数
@@ -911,7 +1030,6 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             # 显示线程信息
             info = "打开{}前端成功\n".format(addr[1]-9900)
             self.textEdit_information.insertPlainText(info)
-            self.net_connect_btn.setEnabled(False)
 
     # slot函数，接收线程信号，显示图像在第一个图像框中
     def Imgsw5(self, isClear):
@@ -921,6 +1039,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
         #     cv2.imshow("{}号相机".format(i), imgdecode[i])
         #     cv2.waitKey(1)
         # 如果没有异物
+        index = 5
+        self.isclear[index] = isClear
         if isClear == 1:
             # self.textEdit_info.setText("OK")
             # 设置门为蓝色（后期改成蓝色门图像）
@@ -935,6 +1055,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(5)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(5))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet6(self):
         # 新建线程，传入参数
@@ -954,24 +1077,27 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     # slot函数，接收线程信号，显示图像在第一个图像框中
     def Imgsw6(self, isClear):
         global imgdecode  # 声明使用的全局变量
-        if 1:
-            # 如果没有异物
-            if isClear == 1:
-                # self.textEdit_info.setText("OK")
-                # 设置门为蓝色（后期改成蓝色门图像）
-                self.label_door_6.setStyleSheet("background-color:rgb(255,255,0);")
-                self.ChangeLabelFlag(6)
-            elif isClear == 0:  # 如果有异物
-                # 设置门为红色（后期改成红色门图像）
-                self.label_door_6.setStyleSheet("background-color:rgb(255,0,0);")
-                # cv2.rectangle(imgdecode[1], (0,0), (imgdecode[1].shape[1], imgdecode[1].shape[0]), (255, 0, 0), 3)
-                # self.textEdit_info.setText("Warning!!!")
-                # 显示该位置图像
-                self.ShowImg(6)
-            elif isClear == CAMERROR:  # 如果收到摄像头错误
-                print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(6))
-        else:
+        # 如果没有异物
+        index = 6
+        self.isclear[index] = isClear
+        if isClear == 1:
+            # self.textEdit_info.setText("OK")
+            # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_6.setStyleSheet("background-color:rgb(0,0,255);")
+            self.ChangeLabelFlag(6)
+        elif isClear == 0:  # 如果有异物
+            # 设置门为红色（后期改成红色门图像）
+            self.label_door_6.setStyleSheet("background-color:rgb(255,0,0);")
+            # cv2.rectangle(imgdecode[1], (0,0), (imgdecode[1].shape[1], imgdecode[1].shape[0]), (255, 0, 0), 3)
+            # self.textEdit_info.setText("Warning!!!")
+            # 显示该位置图像
+            self.ShowImg(6)
+        elif isClear == CAMERROR:  # 如果收到摄像头错误
+            print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(6))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
+
     def connectnet7(self):
         # 新建线程，传入参数
         addr = self.addr_imgs[7]
@@ -991,21 +1117,25 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw7(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
-        if bischecking:
-            if isClear == 1:
-                # self.textEdit_info.setText("OK")
-                # 检测过程中无异为黄色，有异物为红色
-                self.label_door_7.setStyleSheet("background-color:rgb(255,255,0);")
-                self.ChangeLabelFlag(7)
-            elif isClear == 0:  # 如果有异物
-                # 设置门为红色（后期改成红色门图像）
-                self.label_door_7.setStyleSheet("background-color:rgb(255,0,0);")
-                # cv2.rectangle(imgdecode[1], (0,0), (imgdecode[1].shape[1], imgdecode[1].shape[0]), (255, 0, 0), 3)
-                # self.textEdit_info.setText("Warning!!!")
-                # 显示该位置图像
-                self.ShowImg(7)
-        if isClear == CAMERROR:  # 如果收到摄像头错误
+        index = 7
+        self.isclear[index] = isClear
+        if isClear == 1:
+            # self.textEdit_info.setText("OK")
+            # 设置门为蓝色（后期改成蓝色门图像）
+            self.label_door_7.setStyleSheet("background-color:rgb(0,0,255);")
+            self.ChangeLabelFlag(7)
+        elif isClear == 0:  # 如果有异物
+            # 设置门为红色（后期改成红色门图像）
+            self.label_door_7.setStyleSheet("background-color:rgb(255,0,0);")
+            # cv2.rectangle(imgdecode[1], (0,0), (imgdecode[1].shape[1], imgdecode[1].shape[0]), (255, 0, 0), 3)
+            # self.textEdit_info.setText("Warning!!!")
+            # 显示该位置图像
+            self.ShowImg(7)
+        elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(7))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet8(self):
         # 新建线程，传入参数
@@ -1026,6 +1156,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw8(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 8
+        self.isclear[index] = isClear
         if isClear == 1:
             # self.textEdit_info.setText("OK")
             # 设置门为蓝色（后期改成蓝色门图像）
@@ -1040,6 +1172,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(8)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(8))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet9(self):
         # 新建线程，传入参数
@@ -1060,6 +1195,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw9(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 9
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_9.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1071,6 +1208,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(9)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(9))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet10(self):
         # 新建线程，传入参数
@@ -1091,6 +1231,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw10(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 10
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_10.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1102,6 +1244,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(10)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(10))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet11(self):
         # 新建线程，传入参数
@@ -1122,6 +1267,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw11(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 11
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_11.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1133,6 +1280,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(11)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(11))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet12(self):
         # 新建线程，传入参数
@@ -1153,6 +1303,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw12(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 12
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_12.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1164,6 +1316,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(12)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(12))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet13(self):
         # 新建线程，传入参数
@@ -1184,6 +1339,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw13(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 13
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_13.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1195,6 +1352,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(13)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(13))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet14(self):
         # 新建线程，传入参数
@@ -1215,6 +1375,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw14(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 14
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_14.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1226,6 +1388,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(14)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(14))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet15(self):
         # 新建线程，传入参数
@@ -1246,6 +1411,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw15(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 15
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_15.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1257,6 +1424,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(15)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(15))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet16(self):
         # 新建线程，传入参数
@@ -1277,6 +1447,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw16(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 16
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_16.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1288,6 +1460,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(16)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(16))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet17(self):
         # 新建线程，传入参数
@@ -1308,6 +1483,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw17(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 17
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_17.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1319,6 +1496,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(17)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(17))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet18(self):
         # 新建线程，传入参数
@@ -1339,6 +1519,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw18(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 18
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_18.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1350,6 +1532,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(18)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(18))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet19(self):
         # 新建线程，传入参数
@@ -1370,6 +1555,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw19(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 19
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_19.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1381,6 +1568,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(19)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(19))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet20(self):
         # 新建线程，传入参数
@@ -1401,6 +1591,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw20(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 20
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_20.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1412,6 +1604,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(20)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(20))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet21(self):
         # 新建线程，传入参数
@@ -1432,6 +1627,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw21(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 21
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_21.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1443,6 +1640,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(21)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(21))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet22(self):
         # 新建线程，传入参数
@@ -1463,6 +1663,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw22(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 22
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_22.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1474,6 +1676,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(22)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(22))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet23(self):
         # 新建线程，传入参数
@@ -1494,6 +1699,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw23(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 23
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_23.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1505,6 +1712,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(23)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(23))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet24(self):
         # 新建线程，传入参数
@@ -1525,6 +1735,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw24(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 24
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_24.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1536,6 +1748,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(24)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(24))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet25(self):
         # 新建线程，传入参数
@@ -1556,6 +1771,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw25(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 25
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_25.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1567,6 +1784,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(25)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(25))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet26(self):
         # 新建线程，传入参数
@@ -1587,6 +1807,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw26(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 26
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_26.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1598,6 +1820,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(26)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(26))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet27(self):
         # 新建线程，传入参数
@@ -1618,6 +1843,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw27(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 27
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_27.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1629,6 +1856,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(27)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(27))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet28(self):
         # 新建线程，传入参数
@@ -1649,6 +1879,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw28(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 28
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_28.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1660,6 +1892,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(28)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(28))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet29(self):
         # 新建线程，传入参数
@@ -1680,6 +1915,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw29(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 29
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_29.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1691,6 +1928,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(29)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(29))
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     def connectnet30(self):
         # 新建线程，传入参数
@@ -1711,6 +1951,8 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
     def Imgsw30(self, isClear):
         global imgdecode  # 声明使用的全局变量
         # 如果没有异物
+        index = 30
+        self.isclear[index] = isClear
         if isClear == 1:
             # 设置门为蓝色（后期改成蓝色门图像）
             self.label_door_30.setStyleSheet("background-color:rgb(0,0,255);")
@@ -1722,7 +1964,9 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ShowImg(30)
         elif isClear == CAMERROR:  # 如果收到摄像头错误
             print(datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S:"),"{}号前端相机未连接，请检查线路后重启".format(30))
-
+        # 新增检测下位机状态代码
+        # 如果未检测到握手信息并且相机在使用范围内，则显示掉线
+        self.ChangeConStatus(index, isClear)
 
     # 轮询图像显示框，若为空闲则显示指定门序号的图像
     # 查询图像是否保存，未保存则保存
@@ -1799,9 +2043,16 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.labelimg3=-1
             return
 
+    # 关闭提醒
+    def closeEvent(self, QCloseEvent):
+        relpy = QtWidgets.QMessageBox.question(self, "提示", "确认关闭？", QtWidgets.QMessageBox.Yes | QtWidgets.QMessageBox.No)
+        if relpy == QtWidgets.QMessageBox.Yes:
+            QCloseEvent.accept()
+        else:
+            QCloseEvent.ignore()
+
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
-    bischecking = False
     main_form = Main_Form()
     with open("interface.qss") as f:
         qss = f.read()
