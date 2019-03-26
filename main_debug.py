@@ -55,12 +55,12 @@ imagegray = QImage(imagegray.data, imagegray.shape[1], imagegray.shape[0], QImag
 imgdecode = [np.zeros((480, 640, 3), np.uint8)] * 31
 
 # 串口接收命令定义
-#SERCMD_OPEN = b'\x55\xaa\x01\x00\x00\x00\xeb\x90'  # 正常状态 已经取消该状态
-SERCMD_CLOS = b'\x55\xaa\x02\x00\x00\x00\xeb\x90'   # 上下行人状态
-SERCMD_DETE = b'\x55\xaa\x01\x00\x00\x00\xeb\x90'   # 检测状态
+SERCMD_OPEN = b'\x55\xaa\x01\x00\x00\x00\xeb\x90'  # 正常状态
+SERCMD_CLOS = b'\x55\xaa\x02\x00\x00\x00\xeb\x90'  # 上下行人状态
+SERCMD_DETE = b'\x55\xaa\x03\x00\x00\x00\xeb\x90'  # 检测状态
 SERCMD_4 = b'\x55\xaa\x04\x00\x00\x00\xeb\x90'
 SERCMD_5 = b'\x55\xaa\x05\x00\x00\x00\xeb\x90'
-SERCMD_6 = b'\x55\xaa\x06\x00\x00\x00\xeb\x90'      # 复位状态，停止检测，清除报警，显示蓝色
+SERCMD_6 = b'\x55\xaa\x06\x00\x00\x00\xeb\x90'
 SERCMD_7 = b'\x55\xaa\x07\x00\x00\x00\xeb\x90'
 SERCMD_8 = b'\x55\xaa\x08\x00\x00\x00\xeb\x90'
 # 串口发送命令定义
@@ -93,7 +93,7 @@ class Serial_D(QtCore.QObject):
             self.recv_data = None
         if num>0:
             data = self.ser.read(num)
-            # print('received: ',data)
+            # print(data)
             num = len(data)
             if data[:2]==b'\x55\xaa' and data[-2:]==b'\xeb\x90':
                 self.recv_data = data
@@ -613,22 +613,12 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
         conf = configparser.ConfigParser()
         conf.read('./config.cfg')
         self.camNum = conf.getint("camera", "num")
-        self.check_seconds = conf.getint("camera","check_seconds")
-        if self.check_seconds < 1:
-            self.check_seconds = 5
-        print (self.check_seconds)
         self.comboBox_Camnums.setCurrentIndex(self.camNum-1)
         self.comboBox_index_sel.clear()
         for i in range(1,self.camNum+1):
             self.comboBox_index_sel.addItem(str(i))
         # 初始化后即连接所有相机
         self.open_cam()
-        # 开机自动进入复位状态
-        self.ChangeStatus(1)  # 将所有框置为蓝色
-        self.isclear = [1, ] * 31
-        self.watchdog.stop()
-        self.get0frame()
-        self.textEdit_information.insertPlainText("工作中，已停止检查异物")
 
     def AutoStop(self):
         # 如果当前所有相机均为检测到异物，一直发送异物存在命令
@@ -636,12 +626,12 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ser.send_data(SERCMD_BAD)
         else:
             self.ser.send_data(SERCMD_OK)
-            self.watchdogcnt = (self.watchdogcnt+1)%self.check_seconds
-            if self.watchdogcnt == 0:  # 计数到5并且没有异物
-                self.get0frame()  # 发送停止检测命令
-                self.watchdog.stop()
-                self.ChangeStatus(1)
-                self.textEdit_information.insertPlainText("工作中，已停止检查异物")
+            # 调试版，一直处于检测状态
+            # self.watchdogcnt = (self.watchdogcnt+1)%5
+            # if self.watchdogcnt == 0:  # 计数到5并且没有异物
+            #     self.get0frame()  # 发送停止检测命令
+            #     self.watchdog.stop()
+            #     self.ChangeStatus(1)
 
     def UpdateCamNum(self):
         self.camNum = int(self.comboBox_Camnums.currentText())
@@ -702,28 +692,23 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
         self.label_door_29.setStyleSheet(bk)
         self.label_door_30.setStyleSheet(bk)
 
+    # 调试版，始终处于调试状态，不进行状态切换，只用于检测
     def serrec(self):
-        # if self.ser.recv_data == SERCMD_OPEN:  # 正常状态(停止检测)，全部显示蓝色
+        self.ChangeStatus(1)  # 将所有框置为蓝色
+        self.getMframe()  # 发送开始工作命令，检测5秒钟后停止
+        self.watchdog.start(1000)
+        # if self.ser.recv_data == SERCMD_OPEN:  # 正常状态，全部显示蓝色
         #     self.ChangeStatus(1)  # 将所有框置为蓝色
         #     self.isclear=[1,]*31
         #     self.watchdog.stop()
         #     self.get0frame()
-        if self.ser.recv_data == SERCMD_CLOS:  # 上下行人状态（停止检测），显示灰色
-            self.ChangeStatus(2)  # 将所有框置为灰色
-            self.get0frame()
-            self.textEdit_information.insertPlainText("开门中，已停止检查异物")
-        if self.ser.recv_data == SERCMD_DETE:  # 检测状态（正在检测），显示黄色？
-            self.ChangeStatus(3)
-            self.getMframe()  # 发送开始工作命令，检测5秒钟后停止
-            self.watchdog.start(1000)
-            self.textEdit_information.insertPlainText("正在检查异物...")
-        if self.ser.recv_data == SERCMD_6: # 复位状态，停止检测，清除报警，显示蓝色，与正常状态的区别是该状态由IO盒的按钮按下发出
-            self.ChangeStatus(1)  # 将所有框置为蓝色
-            self.isclear = [1, ] * 31
-            self.watchdog.stop()
-            self.get0frame()
-            self.textEdit_information.insertPlainText("工作中，已停止检查异物")
-        print(self.ser.recv_data)
+        # if self.ser.recv_data == SERCMD_CLOS:  # 上下行人状态，显示灰色
+        #     self.ChangeStatus(2)  # 将所有框置为灰色
+        #     self.get0frame()
+        # if self.ser.recv_data == SERCMD_DETE:  # 检测状态，显示黄色？
+        #     self.ChangeStatus(3)
+        #     self.getMframe()  # 发送开始工作命令，检测5秒钟后停止
+        #     self.watchdog.start(1000)
 
     # 连接按钮，连接所有相机用
     def open_cam(self):
@@ -731,64 +716,35 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
         # print(self.CamConnnected)
         self.textEdit_information.setText('')
         self.connectnet()
-        if self.camNum > 1:
-            self.connectnet2()
-        if self.camNum > 2:
-            self.connectnet3()
-        if self.camNum > 3:
-            self.connectnet4()
-        if self.camNum > 4:
-            self.connectnet5()
-        if self.camNum > 5:
-            self.connectnet6()
-        if self.camNum > 6:
-            self.connectnet7()
-        if self.camNum > 7:
-            self.connectnet8()
-        if self.camNum > 8:
-            self.connectnet9()
-        if self.camNum > 9:
-            self.connectnet10()
-        if self.camNum > 10:
-            self.connectnet11()
-        if self.camNum > 11:
-            self.connectnet12()
-        if self.camNum > 12:
-            self.connectnet13()
-        if self.camNum > 13:
-            self.connectnet14()
-        if self.camNum > 14:
-            self.connectnet15()
-        if self.camNum > 15:
-            self.connectnet16()
-        if self.camNum > 16:
-            self.connectnet17()
-        if self.camNum > 17:
-            self.connectnet18()
-        if self.camNum > 18:
-            self.connectnet19()
-        if self.camNum > 19:
-            self.connectnet20()
-        if self.camNum > 20:
-            self.connectnet21()
-        if self.camNum > 21:
-            self.connectnet22()
-        if self.camNum > 22:
-            self.connectnet23()
-        if self.camNum > 23:
-            self.connectnet24()
-        if self.camNum > 24:
-            self.connectnet25()
-        if self.camNum > 25:
-            self.connectnet26()
-        if self.camNum > 26:
-            self.connectnet27()
-        if self.camNum > 27:
-            self.connectnet28()
-        if self.camNum > 28:
-            self.connectnet29()
-        if self.camNum > 29:
-            self.connectnet30()
+        self.connectnet2()
+        self.connectnet3()
+        self.connectnet4()
+        self.connectnet5()
+        self.connectnet6()
+        self.connectnet7()
+        self.connectnet8()
+        self.connectnet9()
+        self.connectnet10()
+        self.connectnet11()
+        self.connectnet12()
+        self.connectnet13()
+        self.connectnet14()
+        self.connectnet15()
+        self.connectnet16()
+        self.connectnet17()
+        self.connectnet18()
+        self.connectnet19()
+        self.connectnet20()
+        self.connectnet21()
+        self.connectnet22()
+        self.connectnet23()
+        self.connectnet24()
+        self.connectnet25()
+        self.connectnet26()
+        self.connectnet27()
+        self.connectnet28()
+        self.connectnet29()
+        self.connectnet30()
 
     # 暂停按钮
     def get0frame(self):
