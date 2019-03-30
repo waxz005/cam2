@@ -55,12 +55,12 @@ imagegray = QImage(imagegray.data, imagegray.shape[1], imagegray.shape[0], QImag
 imgdecode = [np.zeros((480, 640, 3), np.uint8)] * 31
 
 # 串口接收命令定义
-SERCMD_OPEN = b'\x55\xaa\x01\x00\x00\x00\xeb\x90'  # 正常状态
-SERCMD_CLOS = b'\x55\xaa\x02\x00\x00\x00\xeb\x90'  # 上下行人状态
-SERCMD_DETE = b'\x55\xaa\x03\x00\x00\x00\xeb\x90'  # 检测状态
+#SERCMD_OPEN = b'\x55\xaa\x01\x00\x00\x00\xeb\x90'  # 正常状态 已经取消该状态
+SERCMD_CLOS = b'\x55\xaa\x02\x00\x00\x00\xeb\x90'   # 上下行人状态
+SERCMD_DETE = b'\x55\xaa\x01\x00\x00\x00\xeb\x90'   # 检测状态
 SERCMD_4 = b'\x55\xaa\x04\x00\x00\x00\xeb\x90'
 SERCMD_5 = b'\x55\xaa\x05\x00\x00\x00\xeb\x90'
-SERCMD_6 = b'\x55\xaa\x06\x00\x00\x00\xeb\x90'
+SERCMD_6 = b'\x55\xaa\x06\x00\x00\x00\xeb\x90'      # 复位状态，停止检测，清除报警，显示蓝色
 SERCMD_7 = b'\x55\xaa\x07\x00\x00\x00\xeb\x90'
 SERCMD_8 = b'\x55\xaa\x08\x00\x00\x00\xeb\x90'
 # 串口发送命令定义
@@ -77,9 +77,10 @@ class Serial_D(QtCore.QObject):
         self.timer = QTimer()
         self.timer.timeout.connect(self.recieve)
         try:
-            self.ser = serial.Serial(self.port, self.bps)
+            self.ser = serial.Serial('COM1', self.bps)
         except:
-            self.ser = None
+            raise serial.portNotOpenError
+            print("串口打开失败！")
 
     def get_recv_data(self):
         return self.recv_data
@@ -93,7 +94,7 @@ class Serial_D(QtCore.QObject):
             self.recv_data = None
         if num>0:
             data = self.ser.read(num)
-            # print(data)
+            # print('received: ',data)
             num = len(data)
             if data[:2]==b'\x55\xaa' and data[-2:]==b'\xeb\x90':
                 self.recv_data = data
@@ -551,17 +552,27 @@ class SetDlg(QtWidgets.QDialog, Ui_Dlg_setroi):
 class Main_Form(QtWidgets.QWidget, Ui_Form):
     def __init__(self):
         super(Main_Form, self).__init__()
-        #
+        self.setupUi(self)
+
+        # 获取配置参数：相机数量，检测异常时间（秒），串口号
+        conf = configparser.ConfigParser()
+        conf.read('./config.cfg')
+        self.camNum = conf.getint("camera", "num")                  # 相机数
+        self.check_seconds = conf.getint("camera", "check_seconds") # 检测时间（秒）
+        self.comno = conf.getint("camera", "com")                     # 串口号
+        com = "COM"+str(self.comno)
         try:
-            self.ser = Serial_D()
+            self.ser = Serial_D(port=com, bps=9600)
             self.ser.timer.start(2)
             self.ser.SerRecieved.connect(self.serrec)  # 接收信号与serrec函数连接
             # self.ser.send_data(SERCMD_OPEN)  # 发送命令用此函数，命令已经定义成宏形式
+            self.tempFlag = True
+            # self.textEdit_information.setText("串口{}打开成功".format(self.comno))
         except:
+            # self.textEdit_information.setText("串口{}打开失败".format(self.comno))
+            self.tempFlag = False
             print("指定串口未打开！")
         #
-
-        self.setupUi(self)
         self.cnt = 0
         self.selIndex = -1  # 选中的窗口索引，-1表示未选中
         # 故障图片保存标志位，False表示该图片未保存，True表示已经保存
@@ -611,17 +622,34 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
                     self.label_door_name_16, self.label_door_name_17, self.label_door_name_18, self.label_door_name_19, self.label_door_name_20,
                     self.label_door_name_21, self.label_door_name_22, self.label_door_name_23, self.label_door_name_24, self.label_door_name_25,
                     self.label_door_name_26, self.label_door_name_27, self.label_door_name_28, self.label_door_name_29, self.label_door_name_30,]
-
+        self.OPENCAM = ['', self.connectnet, self.connectnet2, self.connectnet3, self.connectnet4, self.connectnet5,
+                         self.connectnet6, self.connectnet7, self.connectnet8, self.connectnet9, self.connectnet10,
+                         self.connectnet11, self.connectnet12, self.connectnet13, self.connectnet14, self.connectnet15,
+                         self.connectnet16, self.connectnet17, self.connectnet18, self.connectnet19, self.connectnet20,
+                         self.connectnet21, self.connectnet22, self.connectnet23, self.connectnet24, self.connectnet25,
+                         self.connectnet26, self.connectnet27, self.connectnet28, self.connectnet29, self.connectnet30]
         # 获取相机数量并显示
-        conf = configparser.ConfigParser()
-        conf.read('./config.cfg')
-        self.camNum = conf.getint("camera", "num")
+
+        if self.check_seconds < 1:
+            self.check_seconds = 5
+        print(self.check_seconds)
+        self.comboBox_ComID.setCurrentIndex(self.comno-1)
         self.comboBox_Camnums.setCurrentIndex(self.camNum-1)
         self.comboBox_index_sel.clear()
         for i in range(1,self.camNum+1):
             self.comboBox_index_sel.addItem(str(i))
         # 初始化后即连接所有相机
         self.open_cam()
+        # 开机自动进入复位状态
+        self.ChangeStatus(1)  # 将所有框置为蓝色
+        self.isclear = [1, ] * 31
+        self.watchdog.stop()
+        self.get0frame()
+        self.textEdit_information.insertPlainText("工作中，已停止检查异物\n")
+        if self.tempFlag == True:
+            self.textEdit_information.insertPlainText(com + "打开成功\n")
+        else:
+            self.textEdit_information.insertPlainText(com + "打开失败\n")
 
     def AutoStop(self):
         # 如果当前所有相机均为检测到异物，一直发送异物存在命令
@@ -629,12 +657,12 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.ser.send_data(SERCMD_BAD)
         else:
             self.ser.send_data(SERCMD_OK)
-            # 调试版，一直处于检测状态
-            # self.watchdogcnt = (self.watchdogcnt+1)%5
-            # if self.watchdogcnt == 0:  # 计数到5并且没有异物
-            #     self.get0frame()  # 发送停止检测命令
-            #     self.watchdog.stop()
-            #     self.ChangeStatus(1)
+            self.watchdogcnt = (self.watchdogcnt+1)%self.check_seconds
+            if self.watchdogcnt == 0:  # 计数到5并且没有异物
+                self.get0frame()  # 发送停止检测命令
+                self.watchdog.stop()
+                self.ChangeStatus(1)
+                self.textEdit_information.insertPlainText("工作中，已停止检查异物\n")
 
     def UpdateCamNum(self):
         self.camNum = int(self.comboBox_Camnums.currentText())
@@ -653,7 +681,23 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
             self.comboBox_index_sel.addItem(str(i))
 
     def UpdateComID(self):
-        return
+        self.comno = int(self.comboBox_ComID.currentText())
+        conf = configparser.ConfigParser()
+        conf.read('./config.cfg')
+        conf.set("camera", "com", str(self.comno))
+        conf.write(open("./config.cfg", 'w'))
+        # self.textEdit_information.insertPlainText("已经修改串口号，请退出软件后重新打开\n")
+        # return
+        com = 'COM{}'.format(self.comno)
+        try:
+            self.ser = Serial_D(port=com)
+            self.ser.timer.start(2)
+            self.ser.SerRecieved.connect(self.serrec)  # 接收信号与serrec函数连接
+            # self.ser.send_data(SERCMD_OPEN)  # 发送命令用此函数，命令已经定义成宏形式
+            self.textEdit_information.setText("打开{}成功\n".format(com))
+        except:
+            self.textEdit_information.setText("打开{}失败\n".format(com))
+            # print("指定串口未打开！")
 
     def ChangeStatus(self, color):  # 1表示蓝色， 2表示灰色，3表示黄色
         gray = "background-color:rgb({0},{0},{0});".format(127)
@@ -698,60 +742,36 @@ class Main_Form(QtWidgets.QWidget, Ui_Form):
         self.label_door_29.setStyleSheet(bk)
         self.label_door_30.setStyleSheet(bk)
 
-    # 调试版，始终处于调试状态，不进行状态切换，只用于检测
     def serrec(self):
-        self.ChangeStatus(1)  # 将所有框置为蓝色
-        self.getMframe()  # 发送开始工作命令，检测5秒钟后停止
-        self.watchdog.start(1000)
-        # if self.ser.recv_data == SERCMD_OPEN:  # 正常状态，全部显示蓝色
+        # if self.ser.recv_data == SERCMD_OPEN:  # 正常状态(停止检测)，全部显示蓝色
         #     self.ChangeStatus(1)  # 将所有框置为蓝色
         #     self.isclear=[1,]*31
         #     self.watchdog.stop()
         #     self.get0frame()
-        # if self.ser.recv_data == SERCMD_CLOS:  # 上下行人状态，显示灰色
-        #     self.ChangeStatus(2)  # 将所有框置为灰色
-        #     self.get0frame()
-        # if self.ser.recv_data == SERCMD_DETE:  # 检测状态，显示黄色？
-        #     self.ChangeStatus(3)
-        #     self.getMframe()  # 发送开始工作命令，检测5秒钟后停止
-        #     self.watchdog.start(1000)
+        if self.ser.recv_data == SERCMD_CLOS:  # 上下行人状态（停止检测），显示灰色
+            self.ChangeStatus(2)  # 将所有框置为灰色
+            self.get0frame()
+            self.textEdit_information.insertPlainText("开门中，已停止检查异物\n")
+        if self.ser.recv_data == SERCMD_DETE:  # 检测状态（正在检测），显示黄色？
+            self.ChangeStatus(3)
+            self.getMframe()  # 发送开始工作命令，检测5秒钟后停止
+            self.watchdog.start(1000)
+            self.textEdit_information.insertPlainText("正在检查异物...\n")
+        if self.ser.recv_data == SERCMD_6: # 复位状态，停止检测，清除报警，显示蓝色，与正常状态的区别是该状态由IO盒的按钮按下发出
+            self.ChangeStatus(1)  # 将所有框置为蓝色
+            self.isclear = [1, ] * 31
+            self.watchdog.stop()
+            self.get0frame()
+            self.textEdit_information.insertPlainText("工作中，已停止检查异物\n")
+        print(self.ser.recv_data)
 
     # 连接按钮，连接所有相机用
     def open_cam(self):
         # self.UpdateCamNum()
         # print(self.CamConnnected)
         self.textEdit_information.setText('')
-        self.connectnet()
-        self.connectnet2()
-        self.connectnet3()
-        self.connectnet4()
-        self.connectnet5()
-        self.connectnet6()
-        self.connectnet7()
-        self.connectnet8()
-        self.connectnet9()
-        self.connectnet10()
-        self.connectnet11()
-        self.connectnet12()
-        self.connectnet13()
-        self.connectnet14()
-        self.connectnet15()
-        self.connectnet16()
-        self.connectnet17()
-        self.connectnet18()
-        self.connectnet19()
-        self.connectnet20()
-        self.connectnet21()
-        self.connectnet22()
-        self.connectnet23()
-        self.connectnet24()
-        self.connectnet25()
-        self.connectnet26()
-        self.connectnet27()
-        self.connectnet28()
-        self.connectnet29()
-        self.connectnet30()
-
+        for i in range(1, self.camNum+1):
+            self.OPENCAM[i]()
     # 暂停按钮
     def get0frame(self):
         # self.UpdateCamNum()
